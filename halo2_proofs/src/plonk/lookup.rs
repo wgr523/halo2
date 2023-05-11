@@ -1,6 +1,6 @@
 use super::circuit::Expression;
 use ff::Field;
-use std::fmt::{self, Debug};
+use std::fmt::{self, Debug, Display};
 
 pub(crate) mod prover;
 pub(crate) mod verifier;
@@ -18,6 +18,12 @@ impl<F: Field> Debug for Argument<F> {
             .field("input_expressions", &self.input_expressions)
             .field("table_expressions", &self.table_expressions)
             .finish()
+    }
+}
+
+impl<F: Field> Display for Argument<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name)
     }
 }
 
