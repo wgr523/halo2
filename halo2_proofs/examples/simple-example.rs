@@ -306,12 +306,23 @@ impl<F: Field> Circuit<F> for MyCircuit<F> {
 
 fn main() {
     use halo2_proofs::dev::MockProver;
-    use halo2curves::pasta::Fp;
+    use halo2curves::bn256::Fr as Fp;
+    use rand_core::SeedableRng;
+    use halo2_proofs::poly::commitment::ParamsProver;
+    use halo2_proofs::transcript::TranscriptWriterBuffer;
+    use halo2curves::bn256::{Bn256, G1Affine};
+    use rand_chacha::ChaChaRng;
+    use halo2_proofs::plonk::{create_proof, keygen_pk, keygen_vk, verify_proof};
+    use halo2_proofs::poly::kzg::commitment::{KZGCommitmentScheme, ParamsKZG, ParamsVerifierKZG};
+    use halo2_proofs::poly::kzg::multiopen::{ProverSHPLONK, VerifierSHPLONK};
+    use halo2_proofs::poly::kzg::strategy::SingleStrategy;
+    use halo2_proofs::transcript::{Blake2bRead, Blake2bWrite, Challenge255, TranscriptReadBuffer};
+    use std::time::Instant;
 
     // ANCHOR: test-circuit
     // The number of rows in our circuit cannot exceed 2^k. Since our example
     // circuit is very small, we can pick a very small value here.
-    let k = 4;
+    let k = 16;
 
     // Prepare the private and public inputs to the circuit!
     let constant = Fp::from(7);
@@ -329,7 +340,8 @@ fn main() {
     // Arrange the public input. We expose the multiplication result in row 0
     // of the instance column, so we position it there in our public inputs.
     let mut public_inputs = vec![c];
-
+    let instance: Vec<Vec<Fp>> = vec![public_inputs.clone()];
+    let instance_refs: Vec<&[Fp]> = instance.iter().map(|v| &v[..]).collect();
     // Given the correct public input, our circuit will verify.
     let prover = MockProver::run(k, &circuit, vec![public_inputs.clone()]).unwrap();
     assert_eq!(prover.verify(), Ok(()));
@@ -339,4 +351,60 @@ fn main() {
     let prover = MockProver::run(k, &circuit, vec![public_inputs]).unwrap();
     assert!(prover.verify().is_err());
     // ANCHOR_END: test-circuit
+
+    // Run real prover
+
+    // setup generation
+    let mut rng = ChaChaRng::seed_from_u64(2);
+    let general_params = ParamsKZG::<Bn256>::setup(k, &mut rng);
+    let verifier_params: ParamsVerifierKZG<Bn256> = general_params.verifier_params().clone();
+    // Initialize the proving key
+    let vk = keygen_vk(&general_params, &circuit).expect("keygen_vk should not fail");
+    let pk = keygen_pk(&general_params, vk, &circuit).expect("keygen_pk should not fail");
+
+    let rng = rng.clone();
+    let general_params = general_params.clone();
+    let pk = pk.clone();
+
+    let now = Instant::now();
+    // Create a proof
+    let mut transcript = Blake2bWrite::<_, G1Affine, Challenge255<_>>::init(vec![]);
+    create_proof::<
+        KZGCommitmentScheme<Bn256>,
+        ProverSHPLONK<'_, Bn256>,
+        Challenge255<G1Affine>,
+        ChaChaRng,
+        Blake2bWrite<Vec<u8>, G1Affine, Challenge255<G1Affine>>,
+        _,
+    >(
+        &general_params,
+        &pk,
+        &[circuit],
+        &[&instance_refs],
+        rng,
+        &mut transcript,
+    )
+    .expect("proof generation should not fail");
+    let elapsed = now.elapsed();
+    println!("Elapsed: {:.2?}", elapsed);
+    let proof = transcript.finalize();
+    println!("proof length: {}", proof.len());
+
+    let mut verifier_transcript = Blake2bRead::<_, G1Affine, Challenge255<_>>::init(&proof[..]);
+    let strategy = SingleStrategy::new(&general_params);
+
+    verify_proof::<
+        KZGCommitmentScheme<Bn256>,
+        VerifierSHPLONK<'_, Bn256>,
+        Challenge255<G1Affine>,
+        Blake2bRead<&[u8], G1Affine, Challenge255<G1Affine>>,
+        SingleStrategy<'_, Bn256>,
+    >(
+        &verifier_params,
+        pk.get_vk(),
+        strategy,
+        &[&instance_refs],
+        &mut verifier_transcript,
+    )
+    .expect("failed to verify bench circuit");
 }
