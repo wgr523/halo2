@@ -2169,6 +2169,11 @@ impl<F: Field> ConstraintSystem<F> {
                 .max()
                 .unwrap_or(1),
         );
+        // print lookups and degrees
+        // self.lookups.iter().for_each(|l| {
+        //     let degree = l.required_degree();
+        //     println!("{},{}", l, degree);
+        // });
 
         // Account for each gate to ensure our quotient polynomial is the
         // correct degree and that our extended domain is the right size.
@@ -2180,6 +2185,19 @@ impl<F: Field> ConstraintSystem<F> {
                 .max()
                 .unwrap_or(0),
         );
+        // print gates and degrees
+        self.gates.iter().for_each(|gate| {
+            let name = gate.name();
+            gate.polynomials()
+                .iter()
+                .zip(gate.constraint_names.iter())
+                .for_each(|(l, expr_name)| {
+                    let degree = l.degree();
+                    if degree > 9 {
+                        println!("{};{};{}", name, expr_name, degree);
+                    }
+                })
+        });
 
         std::cmp::max(degree, self.minimum_degree.unwrap_or(1))
     }
